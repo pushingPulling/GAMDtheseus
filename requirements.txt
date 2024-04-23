@@ -1,0 +1,13 @@
+cupy_cuda12x==13.1.0
+dgl==2.1.0
+dgl==2.1.0+cu121
+jax==0.4.23
+jax_md==0.2.8
+joblib==1.4.0
+matplotlib==3.8.4
+numpy==1.26.4
+OpenMM==8.1.1
+openmmtools==0.23.1
+pytorch_lightning==2.2.2
+scikit_learn==1.4.2
+torch==2.2.1+cu121

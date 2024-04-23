@@ -135,11 +135,11 @@ class SmoothConvLayerNew(nn.Module):
             edge_code = self.edge_affine(g.edata['e'])
             src_code = self.src_affine(h_src[src_idx])
             dst_code = self.dst_affine(h_dst[dst_idx])
-            g.edata['e_emb'] = self.theta_edge(edge_code+src_code+dst_code)
+            g.edata['e_emb'] = self.theta_edge(edge_code+src_code+dst_code) # edge_messages
 
             if self.update_edge_emb:
                 normalized_e_emb = self.edge_layer_norm(g.edata['e_emb'])
-            g.update_all(fn.src_mul_edge('h', 'e_emb', 'm'), fn.sum('m', 'h'))
+            g.update_all(fn.u_mul_e('h', 'e_emb', 'm'), fn.sum('m', 'h'))
             edge_emb = g.ndata['h']
 
         if self.update_edge_emb:
@@ -374,7 +374,7 @@ class WaterMDDynamicBoxNet(nn.Module):
 
     def build_bond_graph(self, bond):
         if isinstance(bond, np.ndarray):
-            bond = torch.from_numpy(bond).cuda()
+            bond = torch.from_numpy(bond)
         bond_graph = dgl.graph((bond[:, 0], bond[:, 1]))
         bond_graph = dgl.add_reverse_edges(bond_graph)  # undirectional and symmetry
         return bond_graph
@@ -528,7 +528,7 @@ class WaterMDNetNew(nn.Module):
 
     def build_bond_graph(self, bond) -> dgl.DGLGraph:
         if isinstance(bond, np.ndarray):
-            bond = torch.from_numpy(bond).cuda()
+            bond = torch.from_numpy(bond)
         bond_graph = dgl.graph((bond[:, 0], bond[:, 1]))
         bond_graph = dgl.add_reverse_edges(bond_graph)  # undirectional and symmetry
         return bond_graph

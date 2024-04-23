@@ -65,18 +65,18 @@ def center_positions(pos):
     offset = np.mean(pos, axis=0)
     return pos - offset, offset
 
-def build_model(args, ckpt=None):
+def build_model(args, ckpt=None, ckk=None):
 
     param_dict = {
-                  'encoding_size': args.encoding_size,
-                  'out_feats': 3,
-                  'hidden_dim': args.hidden_dim,
-                  'edge_embedding_dim': args.edge_embedding_dim,
-                  'conv_layer': 4,
-                  'drop_edge': args.drop_edge,
-                  'use_layer_norm': args.use_layer_norm,
-                  'box_size': BOX_SIZE,
-                  }
+                'encoding_size': args.encoding_size,
+                'out_feats': 3,
+                'hidden_dim': args.hidden_dim,
+                'edge_embedding_dim': args.edge_embedding_dim,
+                'conv_layer': 4,
+                'drop_edge': args.drop_edge,
+                'use_layer_norm': args.use_layer_norm,
+                'box_size': BOX_SIZE,
+                }
 
     print("Using following set of hyper-parameters")
     print(param_dict)
@@ -84,15 +84,16 @@ def build_model(args, ckpt=None):
 
     if ckpt is not None:
         print('Loading model weights from: ', ckpt)
-        model.load_state_dict((torch.load(ckpt)))
+        model.load_state_dict((torch.load(ckpt))["state_dict"])
     return model
 
 
 class ParticleNetLightning(pl.LightningModule):
     def __init__(self, args, num_device=1, epoch_num=100, batch_size=1, learning_rate=3e-4, log_freq=1000,
-                 model_weights_ckpt=None, scaler_ckpt=None):
+                 model_weights_ckpt=None, scaler_ckpt=None, checkpoint=None):
         super(ParticleNetLightning, self).__init__()
-        self.pnet_model = build_model(args, model_weights_ckpt)
+        self.save_hyperparameters()
+        self.pnet_model = build_model(args, model_weights_ckpt, checkpoint)
         self.epoch_num = epoch_num
         self.learning_rate = learning_rate
         self.batch_size = batch_size
@@ -115,6 +116,9 @@ class ParticleNetLightning(pl.LightningModule):
         self.data_dir = args.data_dir
         self.loss_fn = args.loss
         assert self.loss_fn in ['mae', 'mse']
+
+
+
 
     def load_training_stats(self, scaler_ckpt):
         if scaler_ckpt is not None:
@@ -165,8 +169,9 @@ class ParticleNetLightning(pl.LightningModule):
 
     def get_edge_idx(self, nbrs, pos_jax, mask):
         dummy_center_idx = nbrs.idx.copy()
-        dummy_center_idx = jax.ops.index_update(dummy_center_idx, None,
-                                                jnp.arange(pos_jax.shape[0]).reshape(-1, 1))
+        #dummy_center_idx = jax.ops.index_update(dummy_center_idx, None,
+        #                                        jnp.arange(pos_jax.shape[0]).reshape(-1, 1))
+        dummy_center_idx = dummy_center_idx.at[None].set(jnp.arange(pos_jax.shape[0]).reshape(-1, 1))
         center_idx = dummy_center_idx.reshape(-1)
         center_idx_ = cupy.asarray(center_idx)
         center_idx_tsr = torch.as_tensor(center_idx_, device='cuda')
@@ -244,7 +249,7 @@ class ParticleNetLightning(pl.LightningModule):
 
         self.log('total loss', loss, on_step=True, prog_bar=True, logger=True)
         self.log(f'{self.loss_fn} loss', loss, on_step=True, prog_bar=True, logger=True)
-        self.log('var', np.sqrt(self.training_var), on_step=True, prog_bar=True, logger=True)
+        self.log('var', np.sqrt(self.training_var)[0], on_step=True, prog_bar=True, logger=True)
 
         return loss
 
@@ -302,9 +307,7 @@ class ParticleNetLightning(pl.LightningModule):
                 edge_idx_lst += [edge_idx_tsr]
             gt = torch.cat(gt_lst, dim=0)
 
-            pred = self.pnet_model(pos_lst,
-                                   edge_idx_lst,
-                                   )
+            pred = self.pnet_model(pos_lst,edge_idx_lst)
             ratio = torch.sqrt((pred.reshape(-1) - gt.reshape(-1)) ** 2) / (torch.abs(pred.reshape(-1)) + 1e-8)
             outlier_ratio = ratio[ratio > 10.].shape[0] / ratio.shape[0]
             mse = nn.MSELoss()(pred, gt)
@@ -337,17 +340,18 @@ class ModelCheckpointAtEpochEnd(pl.Callback):
     def on_epoch_end(self, trainer: pl.Trainer, pl_module: ParticleNetLightning):
         """ Check if we should save a checkpoint after every train batch """
         epoch = trainer.current_epoch
-        if epoch % self.save_step_frequency == 0 or epoch == pl_module.epoch_num -1:
-            filename = os.path.join(self.filepath, f"{self.prefix}_{epoch}.ckpt")
-            scaler_filename = os.path.join(self.filepath, f"scaler_{epoch}.npz")
+        
+        filename = os.path.join(self.filepath, f"{self.prefix}_{epoch}.ckpt")
+        scaler_filename = os.path.join(self.filepath, f"scaler_{epoch}.npz")
+        print(f"\n\nfilename {filename}, scaler {scaler_filename}\n\n")
 
-            ckpt_path = os.path.join(trainer.checkpoint_callback.dirpath, filename)
-            trainer.save_checkpoint(ckpt_path)
-            np.savez(scaler_filename,
-                     mean=pl_module.training_mean,
-                     var=pl_module.training_var,
-                     )
-            # joblib.dump(pl_module.train_data_scaler, scaler_filename)
+        ckpt_path = os.path.join(trainer.checkpoint_callback.dirpath, filename)
+        trainer.save_checkpoint(ckpt_path)
+        np.savez(scaler_filename,
+                    mean=pl_module.training_mean,
+                    var=pl_module.training_var,
+                    )
+        # joblib.dump(pl_module.train_data_scaler, scaler_filename)
 
 
 def train_model(args):
@@ -358,27 +362,28 @@ def train_model(args):
     max_epoch = args.max_epoch
     weight_ckpt = args.state_ckpt_dir
     batch_size = args.batch_size
+    checkpoint = args.checkpoint
 
     model = ParticleNetLightning(epoch_num=max_epoch,
                                  num_device=num_gpu if num_gpu != -1 else 1,
                                  learning_rate=lr,
                                  model_weights_ckpt=weight_ckpt,
                                  batch_size=batch_size,
-                                 args=args)
+                                 args=args, checkpoint=checkpoint)
     cwd = os.getcwd()
     model_check_point_dir = os.path.join(cwd, check_point_dir)
     os.makedirs(model_check_point_dir, exist_ok=True)
-    epoch_end_callback = ModelCheckpointAtEpochEnd(filepath=model_check_point_dir, save_step_frequency=5)
-    checkpoint_callback = pl.callbacks.ModelCheckpoint()
+    epoch_end_callback = ModelCheckpointAtEpochEnd(filepath=model_check_point_dir, save_step_frequency=0)
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(dirpath='/home/sunnyd/GAMD/modek_ckpt', every_n_epochs=1)
 
-    trainer = Trainer(gpus=num_gpu,
+    trainer = Trainer(devices=num_gpu,
+                      default_root_dir="home/sunnyd/GAMD/ckpts",
                       callbacks=[epoch_end_callback, checkpoint_callback],
                       min_epochs=min_epoch,
                       max_epochs=max_epoch,
-                      amp_backend='apex',
-                      amp_level='O1',
+                      #amp_backend='apex',
+                      #amp_level='O1',
                       benchmark=True,
-                      distributed_backend='ddp',
                       )
     trainer.fit(model)
 
@@ -400,7 +405,11 @@ def main():
     parser.add_argument('--data_dir', default='./md_dataset')
     parser.add_argument('--loss', default='mae')
     parser.add_argument('--num_gpu', default=-1, type=int)
+    parser.add_argument('--checkpoint', default=None, type=str)
+
+    
     args = parser.parse_args()
+  
     train_model(args)
 
 

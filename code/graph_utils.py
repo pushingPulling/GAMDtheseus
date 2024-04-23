@@ -3,6 +3,7 @@ import jax
 from jax_md import space, partition
 from jax_md.space import pairwise_displacement
 from jax import numpy as jnp
+from functools import partial
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -50,7 +51,7 @@ def graph_network_nbr_fn(displacement_fn,
 
     def nbrlst_to_edge_mask(pos: jnp.ndarray, neigh_idx: jnp.ndarray):
         # notice here, pos must be jax numpy array, otherwise fancy indexing will fail
-        d = jax.partial(displacement_fn)
+        d = partial(displacement_fn)
         d = space.map_neighbor(d)
         pos_neigh = pos[neigh_idx]
         dR = d(pos, pos_neigh)

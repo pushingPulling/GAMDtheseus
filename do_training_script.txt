@@ -1,0 +1,2 @@
+python /home/sunnyd/GAMD/code/LJ/train_network_lj.py --cp_dir /home/sunnyd/GAMD/model_ckpt_lj --state_ckpt_dir /home/sunnyd/GAMD/state_ckpt_lj --min_epoch 1 
+--max_epoch 1 --batch_size 1 --encoding_size 128 --hidden_dim 128 --edge_embedding_dim 128 --loss mae --data_dir /home/sunnyd/GAMD/dataset --use_layer_norm --num_gpu 1

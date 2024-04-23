@@ -97,6 +97,7 @@ class LJDataNew(Dataset):
         return len(self.idx)
 
     def __getitem__(self, idx, get_path_name=False):
+        x = 2
         idx = self.idx[idx]
         sample_to_read = idx % self.sample_num
         seed = idx // self.sample_num
